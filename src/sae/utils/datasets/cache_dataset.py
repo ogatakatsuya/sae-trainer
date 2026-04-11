@@ -1,11 +1,88 @@
 import collections
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 import torch
 from datasets import Dataset as HFDataset
+from PIL import Image
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizer, ProcessorMixin
+
+# ShareGPT "from" values → OpenAI "role" values
+_ROLE_MAP = {
+    "human": "user",
+    "gpt": "assistant",
+    "assistant": "assistant",
+    "user": "user",
+    "system": "system",
+}
+
+
+def _text_to_multimodal_content(
+    text: str, image_iter
+) -> Union[str, List[Dict[str, Any]]]:
+    """If *text* contains <image> placeholders, replace each one with an image
+    content block and return a multimodal content list.  Otherwise return the
+    original string so that text-only turns stay compact."""
+    if "<image>" not in text:
+        return text
+    parts = text.split("<image>")
+    content: List[Dict[str, Any]] = []
+    for i, chunk in enumerate(parts):
+        if i > 0:
+            try:
+                content.append({"type": "image", "image": next(image_iter)})
+            except StopIteration:
+                # More placeholders than images — insert a blank marker so
+                # apply_chat_template still generates a vision token slot.
+                content.append({"type": "image"})
+        if chunk:
+            content.append({"type": "text", "text": chunk})
+    return content
+
+
+def normalize_conversations(
+    conversations: List[Dict[str, Any]],
+    images: Optional[List[Image.Image]] = None,
+) -> List[Dict[str, Any]]:
+    """Convert conversations to OpenAI role/content format and embed images.
+
+    Handles:
+    - ShareGPT format (from/value keys) → OpenAI format (role/content keys)
+    - <image> placeholders in text → multimodal content list with image blocks
+
+    When *images* is provided the PIL Images are embedded directly into the
+    content blocks so that apply_chat_template can compute the correct number
+    of vision tokens (required for dynamic-resolution models like Qwen-VL).
+    """
+    image_iter = iter(images or [])
+    normalized = []
+    for turn in conversations:
+        if "role" in turn:
+            role = turn["role"]
+            content = turn.get("content", "")
+        elif "from" in turn:
+            role = _ROLE_MAP.get(turn["from"], turn["from"])
+            content = turn.get("value", "")
+        else:
+            normalized.append(turn)
+            continue
+
+        if isinstance(content, str):
+            content = _text_to_multimodal_content(content, image_iter)
+
+        normalized.append({"role": role, "content": content})
+    return normalized
+
+
+def to_image_list(value: Any) -> List[Image.Image]:
+    """Ensure image field is always a list of PIL Images."""
+    if value is None:
+        return []
+    if isinstance(value, Image.Image):
+        return [value]
+    # list / sequence of PIL Images (or already a list)
+    return list(value)
 
 
 @dataclass
@@ -93,14 +170,16 @@ class CacheDataset(Dataset):
         row = self.dataframe[index]
 
         if self.processor is not None:
-            # By default we assume
+            images = to_image_list(row[self.image_key]) if self.image_key in row else []
+            # Pass images so <image> placeholders are converted to multimodal
+            # content blocks — apply_chat_template uses them to compute the
+            # correct vision token count for dynamic-resolution models.
+            conversations = normalize_conversations(row[self.text_key], images)
             text = self.processor.apply_chat_template(
-                row[self.text_key], tokenize=False, add_generation_prompt=False
+                conversations, tokenize=False, add_generation_prompt=False
             )
             multi_modal_inputs = {}
-            images = None
-            if self.image_key in row:
-                images = [image for image in row[self.image_key]]
+            if images:
                 multi_modal_inputs["images"] = images
 
             # TODO
