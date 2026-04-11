@@ -119,7 +119,9 @@ class TopKSaeModel(BaseSaeModel):
         """
         self._set_adapter_layers(enabled=False)
 
-    def set_adapter(self, adapter_name: Union[str, list[str]]) -> None:
+    def set_adapter(
+        self, adapter_name: Union[str, list[str]], inference_mode: bool = False
+    ) -> None:
         """Set the active adapter(s).
 
         Additionally, this function will set the specified adapters to trainable (i.e., requires_grad=True). If this is
@@ -191,7 +193,7 @@ class TopKSaeModel(BaseSaeModel):
         log_dict = {}
         for name, module in self.named_modules():
             if isinstance(module, TopKSaeLayer):
-                log_dict[
-                    f"{name}/dead_latent_percentage"
-                ] = module.dead_latent_percentage
+                log_dict[f"{name}/dead_latent_percentage"] = (
+                    module.dead_latent_percentage
+                )
         return log_dict
