@@ -20,6 +20,8 @@ class TrainingArguments(transformers.TrainingArguments):
 class ModelArguments:
     model_path: str
     attn_implementation: str = "sdpa"
+    # Optional: fix the image resolution passed to the processor (min_pixels = max_pixels = image_pixels).
+    image_pixels: Optional[int] = None
 
 
 @dataclass

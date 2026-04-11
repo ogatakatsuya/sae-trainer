@@ -44,11 +44,23 @@ class DataCollator:
         )
         attention_mask = input_ids.ne(self.processor.tokenizer.pad_token_id)
         inputs.pop("attention_mask")
+
+        # mm_token_type_ids (Qwen3-VL) has the same (1, seq_len) shape as input_ids
+        # and must be padded to the same length. Pad with 0 (= text token type).
+        mm_token_type_ids = None
+        if "mm_token_type_ids" in inputs:
+            mm_token_type_ids_list = [v.squeeze(0) for v in inputs.pop("mm_token_type_ids")]
+            mm_token_type_ids = self.pad_sequence(
+                mm_token_type_ids_list, batch_first=True, padding_value=0
+            )
+
         batched_inputs = {}
         for key, values in inputs.items():
             batched_inputs[key] = torch.concatenate(values, dim=0)
         batched_inputs["input_ids"] = input_ids
         batched_inputs["attention_mask"] = attention_mask
+        if mm_token_type_ids is not None:
+            batched_inputs["mm_token_type_ids"] = mm_token_type_ids
 
         return batched_inputs
 
@@ -104,6 +116,7 @@ class CacheDataset(Dataset):
             model_inputs = self.processor(
                 text=[text], return_tensors="pt", **multi_modal_inputs
             )
+
         else:
             text = self.tokenizer.apply_chat_template(
                 row[self.text_key], tokenize=False, add_generation_prompt=False

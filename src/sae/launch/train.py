@@ -31,7 +31,11 @@ def main():
         sae_config=sae_config.__dict__,
     )
 
-    processor = hf_processor(model_args.model_path)
+    processor_kwargs = {}
+    if model_args.image_pixels is not None:
+        processor_kwargs["min_pixels"] = model_args.image_pixels
+        processor_kwargs["max_pixels"] = model_args.image_pixels
+    processor = hf_processor(model_args.model_path, **processor_kwargs)
     tokenizer = hf_tokenizer(model_args.model_path)
 
     model_kwargs = {
