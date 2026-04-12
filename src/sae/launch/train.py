@@ -70,7 +70,7 @@ def main():
         data_collator=sae_dataset.get_collator(),
         train_dataset=sae_dataset,
     )
-    trainer.train()
+    trainer.train(resume_from_checkpoint=trainer_args.resume_from_checkpoint)
 
 
 if __name__ == "__main__":

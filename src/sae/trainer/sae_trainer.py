@@ -1,7 +1,15 @@
+import torch.nn as nn
 from transformers import Trainer
 
 
 class SaeTrainer(Trainer):
+    def training_step(self, model, inputs, num_items_in_batch=None):
+        if not getattr(self, "_static_graph_set", False):
+            if isinstance(model, nn.parallel.DistributedDataParallel):
+                model._set_static_graph()
+            self._static_graph_set = True
+        return super().training_step(model, inputs, num_items_in_batch)
+
     def compute_loss(
         self, model, inputs, return_outputs=False, num_items_in_batch=None
     ):
