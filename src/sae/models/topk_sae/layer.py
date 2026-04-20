@@ -121,6 +121,7 @@ class Linear(nn.Module, TopKSaeLayer):
         )
         self.num_tokens_fired = torch.zeros(num_latents, dtype=torch.int64)
         self.dead_tokens_threshold = dead_tokens_threshold
+        self._last_pre_act: dict[str, torch.Tensor] = {}
 
     def eager_decode(
         self, top_indices: torch.Tensor, top_acts: torch.Tensor, W_dec: torch.Tensor
@@ -154,6 +155,7 @@ class Linear(nn.Module, TopKSaeLayer):
                 # Remove decoder bias as per Anthropic
                 sae_in = result - bias
                 pre_act: torch.Tensor = encoder(sae_in)
+                self._last_pre_act[activate_adapter] = pre_act
                 top_acts, top_indices = pre_act.topk(k, sorted=False)
                 sae_out = self.eager_decode(top_indices, top_acts, W_dec.mT)
                 sae_out = sae_out + bias

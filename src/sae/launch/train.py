@@ -50,9 +50,15 @@ def main():
     model.config = model_config
     model.print_trainable_parameters()
 
-    dataset = datasets.load_dataset(
-        trainer_args.dataset_path, split=trainer_args.split, name=trainer_args.subset
-    )
+    if os.path.isdir(trainer_args.dataset_path):
+        import glob as _glob
+        split_prefix = trainer_args.split if trainer_args.split else "*"
+        parquet_files = sorted(_glob.glob(os.path.join(trainer_args.dataset_path, f"{split_prefix}-*.parquet")))
+        dataset = datasets.Dataset.from_parquet(parquet_files)
+    else:
+        dataset = datasets.load_dataset(
+            trainer_args.dataset_path, split=trainer_args.split, name=trainer_args.subset
+        )
 
     sae_dataset = CacheDataset(
         dataset=dataset,

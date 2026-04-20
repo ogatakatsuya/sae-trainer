@@ -170,11 +170,19 @@ class CacheDataset(Dataset):
         row = self.dataframe[index]
 
         if self.processor is not None:
-            images = to_image_list(row[self.image_key]) if self.image_key in row else []
+            images = to_image_list(row[self.image_key]) if self.image_key and self.image_key in row else []
             # Pass images so <image> placeholders are converted to multimodal
             # content blocks — apply_chat_template uses them to compute the
             # correct vision token count for dynamic-resolution models.
-            conversations = normalize_conversations(row[self.text_key], images)
+            if self.text_key and self.text_key in row:
+                conversations = normalize_conversations(row[self.text_key], images)
+            else:
+                # Image-only dataset: build a minimal user turn with default prompt
+                content: List[Dict[str, Any]] = []
+                if images:
+                    content.append({"type": "image"})
+                content.append({"type": "text", "text": "Describe this image."})
+                conversations = [{"role": "user", "content": content}]
             text = self.processor.apply_chat_template(
                 conversations, tokenize=False, add_generation_prompt=False
             )

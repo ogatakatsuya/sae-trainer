@@ -14,6 +14,9 @@ class TrainingArguments(transformers.TrainingArguments):
     video_key: Optional[str] = "videos"
     audio_key: Optional[str] = "audios"
     aux_alpha: Optional[float] = 0.1
+    # Knowledge distillation from a teacher SAE
+    distillation_sae_path: Optional[str] = None
+    distillation_alpha: float = 0.1
 
 
 @dataclass
