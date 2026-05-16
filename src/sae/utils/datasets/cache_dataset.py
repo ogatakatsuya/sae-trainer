@@ -1,4 +1,6 @@
 import collections
+import glob
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Union
 
@@ -7,6 +9,11 @@ from datasets import Dataset as HFDataset
 from PIL import Image
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizer, ProcessorMixin
+
+try:
+    from qwen_vl_utils import process_vision_info
+except ImportError:
+    process_vision_info = None
 
 # ShareGPT "from" values → OpenAI "role" values
 _ROLE_MAP = {
@@ -152,11 +159,20 @@ class CacheDataset(Dataset):
         image_key: Optional[str] = None,
         video_key: Optional[str] = None,
         audio_key: Optional[str] = None,
+        is_video: bool = False,
+        video_root: Optional[str] = None,
+        video_total_pixels: Optional[int] = None,
+        video_min_pixels: Optional[int] = None,
+        video_max_frames: Optional[int] = None,
+        video_sample_fps: Optional[float] = None,
     ):
         super().__init__()
 
         if isinstance(dataset, str):
             dataset = HFDataset.from_parquet(dataset)
+
+        if is_video and process_vision_info is None:
+            raise ImportError("qwen_vl_utils is required for video mode: pip install qwen-vl-utils")
 
         self.tokenizer = tokenizer
         self.processor = processor
@@ -164,12 +180,78 @@ class CacheDataset(Dataset):
         self.video_key = video_key
         self.audio_key = audio_key
         self.text_key = text_key
+        self.is_video = is_video
+        self.video_root = video_root
+        self.video_total_pixels = video_total_pixels
+        self.video_min_pixels = video_min_pixels
+        self.video_max_frames = video_max_frames
+        self.video_sample_fps = video_sample_fps
         self.dataframe = dataset
+
+    def _extract_prompt(self, row: Dict[str, Any]) -> str:
+        """Extract a plain-text prompt from text_key, handling both conversations and raw strings."""
+        if not (self.text_key and self.text_key in row):
+            return "Describe this video."
+        value = row[self.text_key]
+        if isinstance(value, str):
+            return value
+        # conversations format — use first user turn
+        for turn in value:
+            role = turn.get("role") or _ROLE_MAP.get(turn.get("from", ""), "")
+            if role == "user":
+                content = turn.get("content") or turn.get("value", "")
+                if isinstance(content, str):
+                    return content
+        return "Describe this video."
 
     def __getitem__(self, index):
         row = self.dataframe[index]
 
-        if self.processor is not None:
+        if self.processor is not None and self.is_video:
+            video = row[self.video_key]
+            if self.video_root and isinstance(video, str) and not os.path.isabs(video):
+                matches = glob.glob(os.path.join(self.video_root, f"v_{video}.*"))
+                if not matches:
+                    raise FileNotFoundError(f"Video not found: {self.video_root}/v_{video}.*")
+                video = matches[0]
+            prompt = self._extract_prompt(row)
+            video_content: Dict[str, Any] = {"video": video}
+            if self.video_total_pixels is not None:
+                video_content["total_pixels"] = self.video_total_pixels
+            if self.video_min_pixels is not None:
+                video_content["min_pixels"] = self.video_min_pixels
+            if self.video_max_frames is not None:
+                video_content["max_frames"] = self.video_max_frames
+            if self.video_sample_fps is not None:
+                video_content["sample_fps"] = self.video_sample_fps
+            messages = [
+                {"role": "user", "content": [video_content, {"type": "text", "text": prompt}]}
+            ]
+            text = self.processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=False
+            )
+            image_inputs, video_inputs, video_kwargs = process_vision_info(
+                [messages],
+                return_video_kwargs=True,
+                image_patch_size=16,
+                return_video_metadata=True,
+            )
+            if video_inputs is not None:
+                video_inputs, video_metadatas = zip(*video_inputs)
+                video_inputs, video_metadatas = list(video_inputs), list(video_metadatas)
+            else:
+                video_metadatas = None
+            model_inputs = self.processor(
+                text=[text],
+                images=image_inputs,
+                videos=video_inputs,
+                video_metadata=video_metadatas,
+                **video_kwargs,
+                do_resize=False,
+                return_tensors="pt",
+            )
+
+        elif self.processor is not None:
             images = to_image_list(row[self.image_key]) if self.image_key and self.image_key in row else []
             # Pass images so <image> placeholders are converted to multimodal
             # content blocks — apply_chat_template uses them to compute the
@@ -190,13 +272,7 @@ class CacheDataset(Dataset):
             if images:
                 multi_modal_inputs["images"] = images
 
-            # TODO
-            # Implement the load logic for video and audios later
-            if self.video_key in row:
-                videos = [video for video in row[self.video_key]]
-                multi_modal_inputs["videos"] = videos
-
-            if self.audio_key in row:
+            if self.audio_key and self.audio_key in row:
                 audios = [audio for audio in row[self.audio_key]]
                 multi_modal_inputs["audios"] = audios
 

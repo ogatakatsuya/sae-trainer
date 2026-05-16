@@ -68,6 +68,12 @@ def main():
         image_key=trainer_args.image_key,
         video_key=trainer_args.video_key,
         audio_key=trainer_args.audio_key,
+        is_video=trainer_args.is_video,
+        video_root=trainer_args.video_root,
+        video_total_pixels=model_args.video_total_pixels,
+        video_min_pixels=model_args.video_min_pixels,
+        video_max_frames=model_args.video_max_frames,
+        video_sample_fps=model_args.video_sample_fps,
     )
 
     trainer = SaeTrainer(
